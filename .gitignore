@@ -1,0 +1,9 @@
+# Wiener benchmark test bench outputs (see TEST_BENCH_PLAN.md)
+images/denoised/
+images/figures/
+wiener_benchmark_results.csv
+wiener_benchmark_oracle_vs_blind.csv
+
+# MATLAB
+*.asv
+*.m~
