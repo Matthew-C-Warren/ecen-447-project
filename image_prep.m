@@ -5,26 +5,16 @@ function manifest = image_prep(inputDir, outputDir, options)
 %   returns a table describing every generated image.
 %
 %   Optional name-value settings:
-%       WhiteSigma        (default 0.05)
-%       GaussianSigma     (default 0.05)
-%       RayleighSigma     (default 0.05)
-%       ExponentialScale  (default 0.05)
-%       SaltPepperDensity (default 0.05)
-%       UniformAmplitude  (default 0.05)
-%       Recursive         (default true)
+%       TargetSNRdB (default [5 10 20])  SNR levels generated in one run
+%       Recursive   (default true)
 %
-%   Generated folders: clean, white, gaussian, rayleigh, exponential,
-%                      salt_pepper, uniform.
+%   Generated folders: clean, white, gaussian, rayleigh, exponential, uniform.
+%   Noise outputs are grouped below each folder as snr_5, snr_10, and snr_20.
 
 arguments
     inputDir (1,:) char = ""
     outputDir (1,:) char = ""
-    options.WhiteSigma (1,1) double {mustBeInRange(options.WhiteSigma,0,1)} = 0.05
-    options.GaussianSigma (1,1) double {mustBeInRange(options.GaussianSigma,0,1)} = 0.05
-    options.RayleighSigma (1,1) double {mustBeInRange(options.RayleighSigma,0,1)} = 0.05
-    options.ExponentialScale (1,1) double {mustBeInRange(options.ExponentialScale,0,1)} = 0.05
-    options.SaltPepperDensity (1,1) double {mustBeInRange(options.SaltPepperDensity,0,1)} = 0.05
-    options.UniformAmplitude (1,1) double {mustBeInRange(options.UniformAmplitude,0,1)} = 0.05
+    options.TargetSNRdB (1,:) double {mustBeFinite, mustBeReal} = [5 10 20]
     options.Recursive (1,1) logical = true
 end
 
@@ -49,9 +39,18 @@ if ~isfolder(inputDir)
     error("Input folder does not exist: %s", inputDir);
 end
 
-noiseFolders = ["clean", "white", "gaussian", "rayleigh", "exponential", "salt_pepper", "uniform"];
+noiseFolders = ["clean", "white", "gaussian", "rayleigh", "exponential", "uniform"];
 for i = 1:numel(noiseFolders)
-    mkdir(fullfile(outputDir, noiseFolders(i)));
+    baseFolder = fullfile(outputDir, noiseFolders(i));
+    mkdir(baseFolder);
+
+    if noiseFolders(i) == "clean"
+        mkdir(fullfile(baseFolder, "snr_original"));
+    else
+        for snrIndex = 1:numel(options.TargetSNRdB)
+            mkdir(fullfile(baseFolder, snrLabel(options.TargetSNRdB(snrIndex))));
+        end
+    end
 end
 
 files = findImages(inputDir, options.Recursive);
@@ -61,7 +60,7 @@ end
 
 records = table('Size',[0 5], ...
     'VariableTypes',{'string','string','string','double','double'}, ...
-    'VariableNames',{'Source','NoiseType','Output','NoiseParameter','Seed'});
+    'VariableNames',{'Source','NoiseType','Output','TargetSNRdB','AchievedSNRdB'});
 
 fprintf("Processing %d images...\n", numel(files));
 for i = 1:numel(files)
@@ -78,49 +77,49 @@ for i = 1:numel(files)
     imageData = normalizeImage(imageData);
 
     outputSubdir = relativeDir;
-    cleanPath = makeOutputPath(outputDir, "clean", outputSubdir, name);
+    cleanPath = makeOutputPath(outputDir, "clean", outputSubdir, name, "original");
     imwriteWithAlpha(imageData, alpha, cleanPath);
 
-    seed = randi([1, 2147483646], 1, 1);
-
-    rng(seed);
-    whiteNoise = randn(size(imageData)) * options.WhiteSigma;
-    whiteImage = max(0, min(1, imageData + whiteNoise));
-    saveNoisyOutput(outputDir, "white", outputSubdir, name, whiteImage, alpha);
-
-    rng(seed + 1);
-    gaussianImage = imnoise(imageData, "gaussian", 0, options.GaussianSigma^2);
-    saveNoisyOutput(outputDir, "gaussian", outputSubdir, name, gaussianImage, alpha);
-
-    rng(seed + 2);
-    u = rand(size(imageData));
-    rayleighNoise = options.RayleighSigma * sqrt(-2 * log(1 - u));
-    rayleighImage = max(0, min(1, imageData + rayleighNoise));
-    saveNoisyOutput(outputDir, "rayleigh", outputSubdir, name, rayleighImage, alpha);
-
-    rng(seed + 3);
-    spImage = imnoise(imageData, "salt & pepper", options.SaltPepperDensity);
-    saveNoisyOutput(outputDir, "salt_pepper", outputSubdir, name, spImage, alpha);
-
-    rng(seed + 4);
-    uniformNoise = (2 * rand(size(imageData)) - 1) * options.UniformAmplitude;
-    uniformImage = max(0, min(1, imageData + uniformNoise));
-    saveNoisyOutput(outputDir, "uniform", outputSubdir, name, uniformImage, alpha);
-
-    rng(seed + 5);
-    u = rand(size(imageData));
-    exponentialNoise = -options.ExponentialScale * log(1 - u);
-    exponentialImage = max(0, min(1, imageData + exponentialNoise));
-    saveNoisyOutput(outputDir, "exponential", outputSubdir, name, exponentialImage, alpha);
-
     records = [records
-        makeRecord(sourcePath, "clean", cleanPath, 0, seed)
-        makeRecord(sourcePath, "white", makeOutputPath(outputDir, "white", outputSubdir, name), options.WhiteSigma, seed)
-        makeRecord(sourcePath, "gaussian", makeOutputPath(outputDir, "gaussian", outputSubdir, name), options.GaussianSigma, seed + 1)
-        makeRecord(sourcePath, "rayleigh", makeOutputPath(outputDir, "rayleigh", outputSubdir, name), options.RayleighSigma, seed + 2)
-        makeRecord(sourcePath, "salt_pepper", makeOutputPath(outputDir, "salt_pepper", outputSubdir, name), options.SaltPepperDensity, seed + 3)
-        makeRecord(sourcePath, "uniform", makeOutputPath(outputDir, "uniform", outputSubdir, name), options.UniformAmplitude, seed + 4)
-        makeRecord(sourcePath, "exponential", makeOutputPath(outputDir, "exponential", outputSubdir, name), options.ExponentialScale, seed + 5)];
+        makeRecord(sourcePath, "clean", cleanPath, 0, Inf)];
+
+    for snrIndex = 1:numel(options.TargetSNRdB)
+        targetSNRdB = options.TargetSNRdB(snrIndex);
+        seed = randi([1, 2147483646], 1, 1);
+
+        rng(seed);
+        [whiteImage, ~] = addNoiseAtSNR(imageData, randn(size(imageData)), targetSNRdB);
+        saveNoisyOutput(outputDir, "white", outputSubdir, name, whiteImage, alpha, targetSNRdB);
+
+        rng(seed + 1);
+        [gaussianImage, ~] = addNoiseAtSNR(imageData, randn(size(imageData)), targetSNRdB);
+        saveNoisyOutput(outputDir, "gaussian", outputSubdir, name, gaussianImage, alpha, targetSNRdB);
+
+        rng(seed + 2);
+        u = rand(size(imageData));
+        rawRayleigh = sqrt(-2 * log(1 - u));
+        rawRayleigh = rawRayleigh - mean(rawRayleigh(:));
+        [rayleighImage, ~] = addNoiseAtSNR(imageData, rawRayleigh, targetSNRdB);
+        saveNoisyOutput(outputDir, "rayleigh", outputSubdir, name, rayleighImage, alpha, targetSNRdB);
+
+        rng(seed + 3);
+        u = rand(size(imageData));
+        rawExponential = -log(1 - u);
+        rawExponential = rawExponential - mean(rawExponential(:));
+        [exponentialImage, ~] = addNoiseAtSNR(imageData, rawExponential, targetSNRdB);
+        saveNoisyOutput(outputDir, "exponential", outputSubdir, name, exponentialImage, alpha, targetSNRdB);
+
+        rng(seed + 4);
+        [uniformImage, ~] = addNoiseAtSNR(imageData, 2 * rand(size(imageData)) - 1, targetSNRdB);
+        saveNoisyOutput(outputDir, "uniform", outputSubdir, name, uniformImage, alpha, targetSNRdB);
+
+        records = [records
+            makeRecord(sourcePath, "white", makeOutputPath(outputDir, "white", outputSubdir, name, targetSNRdB), targetSNRdB, calculateSNR(imageData, whiteImage))
+            makeRecord(sourcePath, "gaussian", makeOutputPath(outputDir, "gaussian", outputSubdir, name, targetSNRdB), targetSNRdB, calculateSNR(imageData, gaussianImage))
+            makeRecord(sourcePath, "rayleigh", makeOutputPath(outputDir, "rayleigh", outputSubdir, name, targetSNRdB), targetSNRdB, calculateSNR(imageData, rayleighImage))
+            makeRecord(sourcePath, "exponential", makeOutputPath(outputDir, "exponential", outputSubdir, name, targetSNRdB), targetSNRdB, calculateSNR(imageData, exponentialImage))
+            makeRecord(sourcePath, "uniform", makeOutputPath(outputDir, "uniform", outputSubdir, name, targetSNRdB), targetSNRdB, calculateSNR(imageData, uniformImage))];
+    end
 
     fprintf("  [%d/%d] %s\n", i, numel(files), name);
 end
@@ -168,19 +167,70 @@ else
 end
 end
 
-function outputPath = makeOutputPath(outputDir, typeName, relativeDir, name)
-folder = fullfile(outputDir, typeName, relativeDir);
+function outputPath = makeOutputPath(outputDir, typeName, relativeDir, name, snrValue)
+if ischar(snrValue) || isstring(snrValue)
+    snrFolder = "snr_" + string(snrValue);
+else
+    snrFolder = snrLabel(snrValue);
+end
+folder = fullfile(outputDir, typeName, snrFolder, relativeDir);
 mkdir(folder);
 outputPath = fullfile(folder, name + ".png");
 end
 
-function saveNoisyOutput(outputDir, typeName, relativeDir, name, imageData, alpha)
-outputPath = makeOutputPath(outputDir, typeName, relativeDir, name);
+function saveNoisyOutput(outputDir, typeName, relativeDir, name, imageData, alpha, targetSNRdB)
+outputPath = makeOutputPath(outputDir, typeName, relativeDir, name, targetSNRdB);
 imwriteWithAlpha(imageData, alpha, outputPath);
 end
 
-function makeRecord = makeRecord(sourcePath, noiseType, outputPath, parameter, seed)
+function makeRecord = makeRecord(sourcePath, noiseType, outputPath, targetSNRdB, achievedSNRdB)
 makeRecord = table(string(sourcePath), string(noiseType), string(outputPath), ...
-    double(parameter), double(seed), ...
-    'VariableNames', {'Source','NoiseType','Output','NoiseParameter','Seed'});
+    double(targetSNRdB), double(achievedSNRdB), ...
+    'VariableNames', {'Source','NoiseType','Output','TargetSNRdB','AchievedSNRdB'});
+end
+
+function snr = calculateSNR(cleanImage, noisyImage)
+noisePower = mean((cleanImage(:) - noisyImage(:)).^2);
+if noisePower <= eps
+    snr = Inf;
+else
+    snr = 10 * log10(mean(cleanImage(:).^2) / noisePower);
+end
+end
+
+function [noisyImage, actualSNR] = addNoiseAtSNR(cleanImage, rawNoise, targetSNRdB)
+signalRMS = sqrt(mean(cleanImage(:).^2));
+desiredNoiseRMS = signalRMS / (10^(targetSNRdB / 20));
+
+lowerScale = 0;
+upperScale = 1;
+while true
+    upperCandidate = max(0, min(1, cleanImage + upperScale * rawNoise));
+    if rms(cleanImage(:) - upperCandidate(:)) >= desiredNoiseRMS
+        break
+    end
+    upperScale = upperScale * 2;
+    if upperScale > 1e6
+        break
+    end
+end
+
+for iteration = 1:30
+    midScale = (lowerScale + upperScale) / 2;
+    candidate = max(0, min(1, cleanImage + midScale * rawNoise));
+    candidateNoiseRMS = rms(cleanImage(:) - candidate(:));
+
+    if candidateNoiseRMS < desiredNoiseRMS
+        lowerScale = midScale;
+    else
+        upperScale = midScale;
+    end
+end
+
+noisyImage = max(0, min(1, cleanImage + midScale * rawNoise));
+actualSNR = calculateSNR(cleanImage, noisyImage);
+end
+
+function label = snrLabel(snrValue)
+label = "snr_" + sprintf("%g", snrValue);
 end
